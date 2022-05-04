@@ -11,11 +11,11 @@ import java.text.SimpleDateFormat;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
+import org.apache.commons.io.input.Tailer;
+import org.apache.commons.io.input.TailerListenerAdapter;
+
 class FallBallGimmick extends JFrame {
 	static FallBallGimmick frame;
-	static CountdownThread countdownthread;
-	static PlayerlogThread playerlogthread;
-	static PingThread pingthread;
 	static Font fontfamily_sec;
 	static Font fontfamily_msec;
 	static Font fontfamily_serverIP;
@@ -28,7 +28,7 @@ class FallBallGimmick extends JFrame {
 		int size_y = 100;
 		BufferedImage image = null;
 		try{
-			File file = new File("window_pt.ini");
+			File file = new File("./resource/window_pt.ini");
 			BufferedReader br = new BufferedReader(new FileReader(file));
 			String str;
 			String[] value;
@@ -46,11 +46,11 @@ class FallBallGimmick extends JFrame {
 			}
 			br.close();
 
-			image = ImageIO.read(new File("background.png"));
+			image = ImageIO.read(new File("./resource/background.png"));
 			size_x = image.getWidth();
 			size_y = image.getHeight();
 
-			Font fontfamily = Font.createFont(Font.TRUETYPE_FONT,new File("TitanOne-Regular.ttf"));
+			Font fontfamily = Font.createFont(Font.TRUETYPE_FONT,new File("./resource/TitanOne-Regular.ttf"));
 			fontfamily_sec = fontfamily.deriveFont(50f);
 			fontfamily_msec = fontfamily.deriveFont(40f);
 			fontfamily_serverIP = fontfamily.deriveFont(18f);
@@ -77,12 +77,16 @@ class FallBallGimmick extends JFrame {
 	static JLabel fliper2;
 	static JLabel serverIP_label;
 
-	static boolean countdown_flg;
+	static int countdown_flg;
 	static Point mouseDownCompCoords;
 	private JPopupMenu popup;
 
 	static Date startDate;
 	static SimpleDateFormat sdf_utc;
+
+	private PlayerlogReader playerlogreader;
+	private CountdownThread countdownthread;
+	private PingThread pingthread;
 
 	FallBallGimmick(int size_x, int size_y, BufferedImage image) {
 		p = new JPanel(null) {
@@ -92,6 +96,9 @@ class FallBallGimmick extends JFrame {
 			}
 		};
 		p.setSize(size_x, size_y);
+
+		sdf_utc = new SimpleDateFormat("HH:mm:ss.SSS");
+		sdf_utc.setTimeZone(TimeZone.getTimeZone("UTC"));
 
 		countdown_sec = new JLabel("3");
 		countdown_sec.setSize(image.getWidth()-138, image.getHeight()-38);
@@ -146,18 +153,18 @@ class FallBallGimmick extends JFrame {
 		popup.add(popup_start);
 		popup_start.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent e) {
-				if (countdown_flg == false){
+				if (countdown_flg == 0){
 					startDate = getCurDateUTC();
-					countdown_flg = true;
+					countdown_flg = 2;
 				}
 			}
 		});
-		JMenuItem popup_reset = new JMenuItem("Reset");
+		JMenuItem popup_reset = new JMenuItem("Stop");
 		popup_reset.setFont(new Font("Meiryo UI", Font.BOLD, 16));
 		popup.add(popup_reset);
 		popup_reset.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent e) {
-				if (countdown_flg == true) countdown_flg = false;
+				if (countdown_flg != 0) countdown_flg = 0;
 			}
 		});
 		JMenuItem popup_shutdown = new JMenuItem("Close");
@@ -197,13 +204,10 @@ class FallBallGimmick extends JFrame {
 		Container contentPane = getContentPane();
 		contentPane.add(p, BorderLayout.CENTER);
 
-		sdf_utc = new SimpleDateFormat("HH:mm:ss.SSS");
-		sdf_utc.setTimeZone(TimeZone.getTimeZone("UTC"));
-
+		playerlogreader = new PlayerlogReader(new File(path_str));
+		playerlogreader.start();
 		countdownthread = new CountdownThread();
 		countdownthread.start();
-		playerlogthread = new PlayerlogThread();
-		playerlogthread.start();
 		pingthread = new PingThread();
 		pingthread.start();
 	}
@@ -213,7 +217,7 @@ class FallBallGimmick extends JFrame {
 	}
 	private void save() {
 		try{
-		  File file = new File("window_pt.ini");
+		  File file = new File("./resource/window_pt.ini");
 		  PrintWriter pw = new PrintWriter(new BufferedWriter(new FileWriter(file)));
 		  Point pt = frame.getLocationOnScreen();
 		  pw.print(pt.x + " " + pt.y);
@@ -281,17 +285,21 @@ class CountdownThread extends Thread{
 		while (true){
 			long countdown = 3000;
 			displayCountdown(countdown);
-			while (FallBallGimmick.frame.countdown_flg == true){
-				long tmp_countdown = calCountdown(countdown);
-				displayCountdown(tmp_countdown);
+			while (FallBallGimmick.frame.countdown_flg != 0){
+				if (FallBallGimmick.frame.countdown_flg == 0){
+					break;
+				} else if (FallBallGimmick.frame.countdown_flg == 2){
+					long tmp_countdown = calCountdown(countdown);
+					displayCountdown(tmp_countdown);
 
-				if (tmp_countdown <= 0) {
-					while (tmp_countdown <= 0) tmp_countdown = 12333 + tmp_countdown;
-					countdown = tmp_countdown;
-					FallBallGimmick.frame.startDate = FallBallGimmick.frame.getCurDateUTC();
+					if (tmp_countdown <= 0) {
+						while (tmp_countdown <= 0) tmp_countdown = 12333 + tmp_countdown;
+						countdown = tmp_countdown;
+						FallBallGimmick.frame.startDate = FallBallGimmick.frame.getCurDateUTC();
+					}
+
+					if (FallBallGimmick.frame.countdown_flg == 0) break;
 				}
-
-				if (FallBallGimmick.frame.countdown_flg == false) break;
 				try{
 			 		Thread.sleep(50);
 				} catch (InterruptedException e) {}
@@ -326,42 +334,29 @@ class CountdownThread extends Thread{
 	}
 }
 
-class PlayerlogThread extends Thread{
-	private Path log_path;
-	private int line_cnt;
-	private long file_size;
+class PlayerlogReader extends TailerListenerAdapter {
+	private Tailer tailer;
+	private Thread thread;
 	private int match_status;
 	private SimpleDateFormat sdf_utc;
 
-	public void run() {
-		log_path = Paths.get(FallBallGimmick.frame.path_str);
-		line_cnt = 0;
-		file_size = 0;
+	public PlayerlogReader(File log) {
 		match_status = 0;
 		sdf_utc = new SimpleDateFormat("HH:mm:ss.SSS");
 		sdf_utc.setTimeZone(TimeZone.getTimeZone("UTC"));
+		tailer = new Tailer(log, this, 10);
+	}
+	public void start() {
+		thread = new Thread(tailer);
+		thread.start();
+	}
 
-		while (true) {
-			long cur_file_size = new File(FallBallGimmick.frame.path_str).length();
-			if (file_size > cur_file_size) { line_cnt = 0; match_status = 0; }
-			file_size = cur_file_size;
-
-			int tmp_line_cnt = 0;
-			try (BufferedReader br = Files.newBufferedReader(log_path, Charset.forName("UTF-8"))) {
-				String text;
-				while((text = br.readLine()) != null) {
-					if (tmp_line_cnt >= line_cnt) {
-						getStartTime(text);
-						getFlipperStatus(text);
-					}
-					tmp_line_cnt++;
-				}
-				line_cnt = tmp_line_cnt;
-			} catch (Exception e) {}
-			try{
-			 	Thread.sleep(3*1000);
-			} catch (InterruptedException e) {}
-		}
+	@Override
+	public void handle(String text) {
+		try {
+			getStartTime(text);
+			getFlipperStatus(text);
+		} catch (Exception e) {}
 	}
 
 	private void getStartTime(String text) {
@@ -373,6 +368,7 @@ class PlayerlogThread extends Thread{
 					FallBallGimmick.frame.serverIP = sp2[0];
 					// FallBallGimmick.frame.pingthread.ReachabilityTest();
 				} else if (text.indexOf("[StateGameLoading] Loading game level scene FallGuy_FallBall_5") != -1){
+					FallBallGimmick.frame.countdown_flg = 1;
 					match_status = 1;
 				}
 				break;
@@ -382,13 +378,13 @@ class PlayerlogThread extends Thread{
 					String[] sp = text.split(": ", 2);
 					try {
 						FallBallGimmick.frame.startDate = sdf_utc.parse(sp[0]);
-						FallBallGimmick.frame.countdown_flg = true;
+						FallBallGimmick.frame.countdown_flg = 2;
 					} catch (Exception e){}
 				} else if ((text.indexOf("[ClientGameManager] Server notifying that the round is over.") != -1) ||
 							(text.indexOf("[StateMainMenu] Creating or joining lobby") != -1) ||
 							(text.indexOf("[StateMatchmaking] Begin matchmaking") != -1)) {
 					match_status = 0;
-					FallBallGimmick.frame.countdown_flg = false;
+					FallBallGimmick.frame.countdown_flg = 0;
 				}
 				break;
 		}
