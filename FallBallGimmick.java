@@ -404,13 +404,13 @@ class PlayerlogReader extends TailerListenerAdapter {
 		}
 	}
 	private void getFlipperStatus(String text) {
-		if ((text.indexOf("SeededRandomisable 12: Flipper has initial flip direction:")) != -1) {
+		if ((text.indexOf("SeededRandomisable 19: Flipper has initial flip direction:")) != -1) {
 		   if (text.substring(text.length() - 6).equals("North ")) {
 			 FallBallGimmick.frame.fliper1.setText("青→青");
 		   } else {
 			 FallBallGimmick.frame.fliper1.setText("青→黄");
 		   }
-		} else if ((text.indexOf("SeededRandomisable 13: Flipper has initial flip direction:")) != -1) {
+		} else if ((text.indexOf("SeededRandomisable 20: Flipper has initial flip direction:")) != -1) {
 		   if (text.substring(text.length() - 6).equals("North ")) {
 			 FallBallGimmick.frame.fliper2.setText("黄→青");
 		   } else {
